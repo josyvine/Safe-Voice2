@@ -267,6 +267,14 @@
             android:theme="@style/AppTheme.Light"
             android:exported="false"/>
 
+        <!-- ACTIVITY FOR CRASH REPORTING -->
+        <activity
+            android:name=".CrashReportActivity"
+            android:label="Error Report"
+            android:theme="@android:style/Theme.DeviceDefault"
+            android:process=":crash_process"
+            android:exported="false"/>
+
 
         <provider
             android:name="androidx.core.content.FileProvider"
