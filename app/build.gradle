@@ -16,7 +16,7 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules-pro'
         }
     }
 
@@ -66,7 +66,7 @@ dependencies {
     // Hidden dependencies of Fragment/Biometric
     implementation 'androidx.activity:activity:1.8.2'
     implementation 'androidx.savedstate:savedstate:1.2.1'
-
+    
     // Archive handling libraries
     implementation 'net.lingala.zip4j:zip4j:2.11.5'
     implementation 'com.github.junrar:junrar:7.5.5'
@@ -74,22 +74,15 @@ dependencies {
     // OkHttp for Gemini API
     implementation 'com.squareup.okhttp3:okhttp:4.9.3'
 
-    // Firebase Bill of Materials (BoM) – manages versions for Firebase libraries
+    // Firebase Bill of Materials (BoM) - manages versions for Firebase libraries
     implementation platform('com.google.firebase:firebase-bom:33.0.0')
 
     // Firebase SDKs for HFM Messenger Drop
     implementation 'com.google.firebase:firebase-auth'
     implementation 'com.google.firebase:firebase-firestore'
 
-    // ==================== LIBTORRENT4J (available on Maven Central) ====================
-    // Core library
-    implementation 'org.libtorrent4j:libtorrent4j:2.0.10'
-
-    // Native ABI libraries – use the **exact** versions that exist on Maven Central
-    implementation 'org.libtorrent4j:libtorrent4j-android-arm64-v8a:2.0.10-30'
-    implementation 'org.libtorrent4j:libtorrent4j-android-armeabi-v7a:2.0.9-29'
-
-    // Optional – only if you target x86/x86_64 devices (most modern phones do not need them)
-    // implementation 'org.libtorrent4j:libtorrent4j-android-x86:2.0.0-6'
-    // implementation 'org.libtorrent4j:libtorrent4j-android-x86_64:2.0.1-7'
+    // TORRENT CLIENT - CORRECT VERSIONS FROM MAVEN CENTRAL
+    implementation 'org.libtorrent4j:libtorrent4j:2.1.0-38'
+    implementation 'org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-38'
+    implementation 'org.libtorrent4j:libtorrent4j-android-arm:2.1.0-38'
 }
