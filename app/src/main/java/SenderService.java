@@ -30,24 +30,11 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.FirebaseFirestoreException;
 import com.google.firebase.firestore.ListenerRegistration;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.InetAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.net.UnknownHostException;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Random;
 
 public class SenderService extends Service {
 
@@ -64,7 +51,6 @@ public class SenderService extends Service {
     private FirebaseFirestore db;
     private FirebaseUser currentUser;
 
-    private NanoHttpd server;
     private File cloakedFile;
     private String dropRequestId;
     private ListenerRegistration requestListener;
@@ -106,8 +92,8 @@ public class SenderService extends Service {
         return START_NOT_STICKY;
     }
 
-    private void startSenderProcess(String filePath, String receiverUsername, String secretNumber) {
-        File inputFile = new File(filePath);
+    private void startSenderProcess(final String filePath, final String receiverUsername, final String secretNumber) {
+        final File inputFile = new File(filePath);
         if (!inputFile.exists()) {
             Log.e(TAG, "File to send does not exist: " + filePath);
             broadcastError("File not found at path: " + filePath);
@@ -125,26 +111,6 @@ public class SenderService extends Service {
             return;
         }
 
-        try {
-            server = new NanoHttpd(cloakedFile);
-            server.start();
-        } catch (IOException e) {
-            Log.e(TAG, "Failed to start HTTP server.", e);
-            broadcastError("Could not start local server for transfer.\n\n" + getStackTraceAsString(e));
-            stopServiceAndCleanup(null);
-            return;
-        }
-
-        updateNotification("Discovering network address...", true);
-        broadcastStatus("Finding Peer...", "Discovering network address...", -1, -1, -1);
-        StunClient.StunResult stunResult = StunClient.getPublicIpAddress();
-        if (stunResult == null) {
-            Log.e(TAG, "STUN discovery failed.");
-            broadcastError("Network discovery failed. Could not determine public IP address.");
-            stopServiceAndCleanup(null);
-            return;
-        }
-
         updateNotification("Creating drop request...", true);
         broadcastStatus("Creating Request...", "Contacting server...", -1, -1, -1);
         String senderUsername = generateUsernameFromUid(currentUser.getUid());
@@ -158,25 +124,48 @@ public class SenderService extends Service {
         dropRequest.put("filesize", cloakedFile.length());
         dropRequest.put("status", "pending");
         dropRequest.put("secretNumber", secretNumber);
-        dropRequest.put("senderPublicIp", stunResult.publicIp);
-        dropRequest.put("senderPublicPort", stunResult.publicPort);
-        dropRequest.put("senderLocalPort", server.getListeningPort());
         dropRequest.put("timestamp", System.currentTimeMillis());
-        dropRequest.put("receiverId", null);
-        
-        dropRequest.put("receiverPublicIp", null);
-        dropRequest.put("receiverPublicPort", null);
+        dropRequest.put("magnetLink", null); // Placeholder
 
         db.collection("drop_requests")
                 .add(dropRequest)
                 .addOnSuccessListener(new OnSuccessListener<DocumentReference>() {
                     @Override
-                    public void onSuccess(DocumentReference documentReference) {
+                    public void onSuccess(final DocumentReference documentReference) {
                         dropRequestId = documentReference.getId();
                         Log.d(TAG, "Drop request created with ID: " + dropRequestId);
-                        updateNotification("Waiting for receiver...", true);
-                        broadcastStatus("Waiting for Receiver...", "Request sent. Waiting for acceptance.", -1, -1, -1);
-                        listenForStatusChange(dropRequestId);
+
+                        // Now that we have the ID, we can start seeding and get the magnet link
+                        updateNotification("Generating transfer link...", true);
+                        broadcastStatus("Generating Link...", "Preparing secure P2P session...", -1, -1, -1);
+
+                        String magnetLink = TorrentManager.getInstance(SenderService.this).startSeeding(cloakedFile, dropRequestId);
+
+                        if (magnetLink != null) {
+                            // Update the document with the magnet link
+                            documentReference.update("magnetLink", magnetLink)
+                                    .addOnSuccessListener(new OnSuccessListener<Void>() {
+                                        @Override
+                                        public void onSuccess(Void aVoid) {
+                                            Log.d(TAG, "Successfully added magnet link to drop request.");
+                                            updateNotification("Waiting for receiver...", true);
+                                            broadcastStatus("Waiting for Receiver...", "Request sent. Waiting for acceptance.", -1, -1, -1);
+                                            listenForStatusChange(dropRequestId);
+                                        }
+                                    })
+                                    .addOnFailureListener(new OnFailureListener() {
+                                        @Override
+                                        public void onFailure(@NonNull Exception e) {
+                                            Log.e(TAG, "Failed to update drop request with magnet link.", e);
+                                            broadcastError("Failed to create secure link for the transfer.\n\n" + getStackTraceAsString(e));
+                                            stopServiceAndCleanup(null);
+                                        }
+                                    });
+                        } else {
+                            Log.e(TAG, "Failed to generate magnet link.");
+                            broadcastError("Failed to generate a secure link for the transfer.");
+                            stopServiceAndCleanup(null);
+                        }
                     }
                 })
                 .addOnFailureListener(new OnFailureListener() {
@@ -188,7 +177,7 @@ public class SenderService extends Service {
                     }
                 });
     }
-    
+
     private void broadcastStatus(String major, String minor, int progress, int max, long bytes) {
         Intent intent = new Intent(DropProgressActivity.ACTION_UPDATE_STATUS);
         intent.putExtra(DropProgressActivity.EXTRA_STATUS_MAJOR, major);
@@ -198,7 +187,7 @@ public class SenderService extends Service {
         intent.putExtra(DropProgressActivity.EXTRA_BYTES_TRANSFERRED, bytes);
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
     }
-    
+
     private void broadcastComplete() {
         Intent intent = new Intent(DropProgressActivity.ACTION_TRANSFER_COMPLETE);
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
@@ -211,7 +200,7 @@ public class SenderService extends Service {
 
         LocalBroadcastManager.getInstance(this).sendBroadcast(new Intent(DropProgressActivity.ACTION_TRANSFER_ERROR));
     }
-    
+
     private String getStackTraceAsString(Exception e) {
         StringWriter sw = new StringWriter();
         PrintWriter pw = new PrintWriter(sw);
@@ -234,24 +223,9 @@ public class SenderService extends Service {
                     Log.d(TAG, "Drop request status changed to: " + status);
 
                     if ("accepted".equals(status)) {
-                        String receiverIp = snapshot.getString("receiverPublicIp");
-                        Long receiverPortLong = snapshot.getLong("receiverPublicPort");
-
-                        if (receiverIp != null && receiverPortLong != null && receiverPortLong != 0) {
-                            final String finalReceiverIp = receiverIp;
-                            final int finalReceiverPort = receiverPortLong.intValue();
-                            
-                            new Thread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    punchHole(finalReceiverIp, finalReceiverPort);
-                                }
-                            }).start();
-                        }
-                        
                         updateNotification("Receiver connected. Transferring...", true);
                         broadcastStatus("Transferring...", "Sending file data...", -1, -1, -1);
-
+                        // libtorrent handles the connection automatically, no more hole punching needed.
                     } else if ("declined".equals(status)) {
                         stopServiceAndCleanup("Receiver declined the transfer.");
                     } else if ("complete".equals(status)) {
@@ -269,25 +243,6 @@ public class SenderService extends Service {
                 }
             }
         });
-    }
-
-    private void punchHole(String receiverIp, int receiverPort) {
-        Socket punchSocket = null;
-        try {
-            Log.d(TAG, "Attempting to punch hole to " + receiverIp + ":" + receiverPort);
-            punchSocket = new Socket(receiverIp, receiverPort);
-            Log.d(TAG, "Hole punch connection succeeded (this is rare).");
-        } catch (IOException e) {
-            Log.d(TAG, "Hole punch connection failed as expected: " + e.getMessage());
-        } finally {
-            if (punchSocket != null) {
-                try {
-                    punchSocket.close();
-                } catch (IOException e) {
-                    // Ignore
-                }
-            }
-        }
     }
 
     private String generateUsernameFromUid(String uid) {
@@ -318,13 +273,10 @@ public class SenderService extends Service {
         if (requestListener != null) {
             requestListener.remove();
         }
-        if (server != null) {
-            server.stopServer();
-        }
         if (cloakedFile != null && cloakedFile.exists()) {
             cloakedFile.delete();
         }
-        
+
         if (dropRequestId != null) {
             db.collection("drop_requests").document(dropRequestId).get().addOnCompleteListener(new OnCompleteListener<DocumentSnapshot>() {
                 @Override
@@ -379,232 +331,5 @@ public class SenderService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
-    }
-
-    private static class NanoHttpd extends Thread {
-        private final ServerSocket serverSocket;
-        private final File fileToServe;
-        private volatile boolean isRunning = true;
-
-        public NanoHttpd(File file) throws IOException {
-            super("NanoHttpd Sender Thread");
-            this.serverSocket = new ServerSocket(0);
-            this.fileToServe = file;
-        }
-
-        public int getListeningPort() {
-            return serverSocket.getLocalPort();
-        }
-
-        public void stopServer() {
-            isRunning = false;
-            try {
-                if (serverSocket != null) {
-                    serverSocket.close();
-                }
-            } catch (IOException e) {
-                Log.e(TAG, "Error closing server socket.", e);
-            }
-            this.interrupt();
-        }
-
-        @Override
-        public void run() {
-            try {
-                while (isRunning) {
-                    final Socket clientSocket = serverSocket.accept();
-                    new Thread(new Runnable() {
-                        @Override
-                        public void run() {
-                            handleRequest(clientSocket);
-                        }
-                    }).start();
-                }
-            } catch (IOException e) {
-                if (isRunning) {
-                    Log.e(TAG, "ServerSocket accept failed.", e);
-                }
-            }
-        }
-
-        private void handleRequest(Socket socket) {
-            BufferedReader in = null;
-            OutputStream out = null;
-            FileInputStream fis = null;
-            try {
-                in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                out = socket.getOutputStream();
-                PrintWriter writer = new PrintWriter(out);
-
-                String line = in.readLine();
-                if (line == null || !line.startsWith("GET")) {
-                    return; 
-                }
-
-                long rangeStart = 0;
-                long rangeEnd = -1;
-
-                while ((line = in.readLine()) != null && !line.isEmpty()) {
-                    if (line.toLowerCase().startsWith("range: bytes=")) {
-                        line = line.substring(13);
-                        String[] parts = line.split("-");
-                        try {
-                            rangeStart = Long.parseLong(parts[0]);
-                            if (parts.length > 1 && !parts[1].isEmpty()) {
-                                rangeEnd = Long.parseLong(parts[1]);
-                            }
-                        } catch (NumberFormatException e) {
-                            // Malformed Range header, ignore.
-                        }
-                    }
-                }
-
-                long fileLen = fileToServe.length();
-                if (rangeEnd == -1) {
-                    rangeEnd = fileLen - 1;
-                }
-
-                if (rangeStart < 0 || rangeStart > fileLen || rangeEnd >= fileLen) {
-                    writer.println("HTTP/1.1 416 Requested Range Not Satisfiable");
-                    writer.println("Content-Range: bytes */" + fileLen);
-                    writer.flush();
-                    return;
-                }
-
-                long contentLength = (rangeEnd - rangeStart) + 1;
-
-                if (rangeStart > 0) {
-                    writer.println("HTTP/1.1 206 Partial Content");
-                    writer.println("Content-Range: bytes " + rangeStart + "-" + rangeEnd + "/" + fileLen);
-                } else {
-                    writer.println("HTTP/1.1 200 OK");
-                }
-
-                writer.println("Content-Type: application/octet-stream");
-                writer.println("Content-Length: " + contentLength);
-                writer.println("Accept-Ranges: bytes");
-                writer.println();
-                writer.flush();
-
-                fis = new FileInputStream(fileToServe);
-                if (rangeStart > 0) {
-                    fis.skip(rangeStart);
-                }
-
-                byte[] buffer = new byte[8192];
-                long bytesRemaining = contentLength;
-                int bytesRead;
-                while (bytesRemaining > 0 && (bytesRead = fis.read(buffer, 0, (int) Math.min(buffer.length, bytesRemaining))) != -1) {
-                    out.write(buffer, 0, bytesRead);
-                    bytesRemaining -= bytesRead;
-                }
-                out.flush();
-                
-            } catch (IOException e) {
-                Log.e(TAG, "Error handling client request", e);
-            } finally {
-                try {
-                    if (fis != null) fis.close();
-                    if (out != null) out.close();
-                    if (in != null) in.close();
-                    if (socket != null) socket.close();
-                } catch (IOException e) {
-                    // ignore
-                }
-            }
-        }
-    }
-    
-    // --- THIS IS THE FIX: Changed from private to public ---
-    public static class StunClient {
-        private static final String STUN_SERVER = "stun.l.google.com";
-        private static final int STUN_PORT = 19302;
-
-        public static class StunResult {
-            public String publicIp;
-            public int publicPort;
-        }
-
-        public static StunResult getPublicIpAddress() {
-            DatagramSocket socket = null;
-            try {
-                socket = new DatagramSocket();
-                socket.setSoTimeout(3000);
-
-                byte[] request = new byte[20];
-                request[0] = 0x00;
-                request[1] = 0x01;
-                request[2] = 0x00;
-                request[3] = 0x00;
-                request[4] = 0x21;
-                request[5] = 0x12;
-                request[6] = (byte) 0xA4;
-                request[7] = 0x42;
-                new Random().nextBytes(Arrays.copyOfRange(request, 8, 20));
-
-                InetAddress address = InetAddress.getByName(STUN_SERVER);
-                DatagramPacket requestPacket = new DatagramPacket(request, request.length, address, STUN_PORT);
-                socket.send(requestPacket);
-
-                byte[] response = new byte[1024];
-                DatagramPacket responsePacket = new DatagramPacket(response, response.length);
-                socket.receive(responsePacket);
-
-                return parseStunResponse(responsePacket.getData(), responsePacket.getLength());
-
-            } catch (Exception e) {
-                Log.e(TAG, "STUN request failed", e);
-                return null;
-            } finally {
-                if (socket != null) {
-                    socket.close();
-                }
-            }
-        }
-
-        private static StunResult parseStunResponse(byte[] data, int length) {
-            if (length < 20 || data[0] != 0x01 || data[1] != 0x01) { 
-                return null;
-            }
-
-            int i = 20; 
-            while (i < length) {
-                int type = ((data[i] & 0xFF) << 8) | (data[i + 1] & 0xFF);
-                int attrLength = ((data[i + 2] & 0xFF) << 8) | (data[i + 3] & 0xFF);
-
-                if (type == 0x0001 || type == 0x0020) {
-                    int family = data[i + 5] & 0xFF;
-                    if (family == 0x01) { // IPv4
-                        int port = ((data[i + 6] & 0xFF) << 8) | (data[i + 7] & 0xFF);
-                        byte[] ipBytes = new byte[4];
-
-                        if (type == 0x0020) { // XOR-MAPPED
-                            port ^= ((data[4] & 0xFF) << 8) | (data[5] & 0xFF);
-                            for (int j = 0; j < 4; j++) {
-                                ipBytes[j] = (byte) (data[i + 8 + j] ^ data[4 + j]);
-                            }
-                        } else { // MAPPED
-                            System.arraycopy(data, i + 8, ipBytes, 0, 4);
-                        }
-
-                        try {
-                            String ip = InetAddress.getByAddress(ipBytes).getHostAddress();
-                            StunResult result = new StunResult();
-                            result.publicIp = ip;
-                            result.publicPort = port;
-                            Log.d(TAG, "STUN Result: " + ip + ":" + port);
-                            return result;
-                        } catch (UnknownHostException e) {
-                            return null;
-                        }
-                    }
-                }
-                i += 4 + attrLength; 
-                if (attrLength % 4 != 0) { 
-                    i += (4 - (attrLength % 4));
-                }
-            }
-            return null;
-        }
     }
 }
