@@ -1,4 +1,72 @@
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">HFM App</string>
+    <!-- App Identity -->
+    <string name="app_name">Safe Voice</string>
+
+    <!-- Disclaimer Screen -->
+    <string name="disclaimer_title">Important Disclaimer &amp; Terms of Service</string>
+    <string name="disclaimer_text">
+        Welcome to Safe Voice.\n\n
+        Before you proceed, you MUST understand and agree to the following terms:\n\n
+        1.  <b>Always-On Service:</b> To function correctly, Safe Voice runs a service in the background at all times to listen for the voice trigger "Help Help". This will consume a small amount of battery.\n\n
+        2.  <b>Emergency Actions:</b> When triggered, this app will automatically attempt to:\n
+            - Call your primary emergency contact.\n
+            - Send SMS messages to all your emergency contacts.\n\n
+        3.  <b>Location Data:</b> The emergency SMS will include a link to your device\'s current location, obtained via GPS. Your location is ONLY accessed and shared when an emergency is triggered.\n\n
+        4.  <b>Permissions:</b> The app requires access to your Microphone, Location, Phone, and SMS to perform its core functions. It cannot work without these permissions.\n\n
+        5.  <b>Not a Replacement:</b> This app is a supplementary tool and is NOT a replacement for official emergency services (like 911, 112, etc.). Always contact official services directly if you can.\n\n
+        6.  <b>No Guarantee:</b> The reliability of this app depends on factors outside of our control, including device performance, battery level, operating system restrictions, network signal, and GPS availability. We are not liable for any failure of the app to perform as expected in an emergency.\n\n
+        By clicking "Accept &amp; Continue", you acknowledge these terms and agree to use Safe Voice at your own risk.
+    </string>
+    <string name="accept_button">Accept &amp; Continue</string>
+    <string name="decline_button">Decline</string>
+
+    <!-- Bottom Navigation Titles -->
+    <string name="title_home">Home</string>
+    <string name="title_contacts">Contacts</string>
+    <string name="title_settings">Settings</string>
+
+    <!-- Home Fragment -->
+    <string name="home_status_listening">Status: Listening for trigger phrase</string>
+    <string name="home_status_stopped">Status: Service is not running</string>
+    <string name="home_start_service_button">Start Listening Service</string>
+    <string name="home_stop_service_button">Stop Listening Service</string>
+    <string name="home_verification_status">Verification: Not Verified</string>
+    <string name="home_verification_status_verified">Verification: Verified as %1$s</string> <!-- %1$s is a placeholder for the user's name -->
+    <string name="home_verify_now_button">Verify Identity Now</string>
+
+
+    <!-- Contacts Fragment -->
+    <string name="contacts_primary_contact_header">Primary Contact (for Phone Calls)</string>
+    <string name="contacts_add_primary_button">Set Primary Contact</string>
+    <string name="contacts_secondary_contacts_header">Priority Contacts (for SMS Alerts)</string>
+    <string name="contacts_add_contact_button">Add New Contact</string>
+    <string name="contact_name_hint">Contact Name</string>
+    <string name="contact_phone_hint">Phone Number</string>
+    <string name="save_contact_button">Save</string>
+
+
+    <!-- Settings Fragment -->
+    <string name="settings_header_firebase">Firebase Configuration</string>
+    <string name="settings_firebase_prompt">When developer quota is reached, connect your own Firebase to continue using Safe Voice.</string>
+    <string name="settings_upload_json_button">Upload google-services.json</string>
+    <string name="settings_show_rules_button">Show Required Firestore Rule</string>
+    <string name="settings_copy_rules_button">Copy Rule</string>
+    <string name="settings_close_rules_button">Close</string>
+    <string name="settings_firebase_rules_helper_text">service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read, write: if true; } } }</string>
+
+    <string name="settings_header_general">General Settings</string>
+    <string name="settings_theme_label">App Theme</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_theme_system">System Default</string>
+
+    <string name="settings_header_emergency">Emergency Settings</string>
+    <string name="settings_webrtc_toggle">Use WebRTC Call (Online Only)</string>
+
+
+    <!-- KYC Activity -->
+    <string name="kyc_instructions_id">Position your ID card inside the frame.</string>
+    <string name="kyc_instructions_face">Now, position your face in the frame.</string>
+    <string name="kyc_status_verifying">Verifying...</string>
+
 </resources>
