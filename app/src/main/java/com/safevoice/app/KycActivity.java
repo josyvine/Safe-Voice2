@@ -22,6 +22,7 @@ import androidx.core.content.ContextCompat;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
+import com.google.android.gms.tasks.Tasks;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -187,49 +188,54 @@ public class KycActivity extends AppCompatActivity {
         @SuppressLint("UnsafeOptInUsageError")
         public void analyze(@NonNull ImageProxy imageProxy) {
             Image mediaImage = imageProxy.getImage();
-            if (mediaImage != null && currentState != KycState.VERIFYING && currentState != KycState.COMPLETE) {
-                InputImage image = InputImage.fromMediaImage(mediaImage, imageProxy.getImageInfo().getRotationDegrees());
-
-                if (currentState == KycState.SCANNING_ID) {
-                    processIdCardImage(image, imageProxy);
-                } else if (currentState == KycState.SCANNING_FACE) {
-                    processLiveFaceImage(image, imageProxy);
-                }
+            if (mediaImage == null || currentState == KycState.VERIFYING || currentState == KycState.COMPLETE) {
+                imageProxy.close();
+                return;
             }
-            // CRITICAL: Close the imageProxy to allow the next frame to be processed.
-            imageProxy.close();
+
+            InputImage image = InputImage.fromMediaImage(mediaImage, imageProxy.getImageInfo().getRotationDegrees());
+
+            Task<?> processingTask;
+
+            if (currentState == KycState.SCANNING_ID) {
+                processingTask = processIdCardImage(image, imageProxy);
+            } else if (currentState == KycState.SCANNING_FACE) {
+                processingTask = processLiveFaceImage(image, imageProxy);
+            } else {
+                imageProxy.close();
+                return;
+            }
+
+            // Add a listener to close the proxy once the processing is done.
+            processingTask.addOnCompleteListener(task -> imageProxy.close());
         }
 
         /**
          * Processes an image frame to find text and a face from an ID card.
+         * Returns a Task that completes when both detection processes are finished.
          */
-        private void processIdCardImage(InputImage image, ImageProxy imageProxy) {
-            // We need to find both text (for the name) and a face (for the embedding).
-            // We run both detectors.
+        private Task<Void> processIdCardImage(InputImage image, ImageProxy imageProxy) {
+            // 1. Create two separate tasks
+            Task<Text> textRecognitionTask = textRecognizer.process(image);
+            Task<List<Face>> faceDetectionTask = faceDetector.process(image);
 
-            // 1. Find text
-            textRecognizer.process(image)
-                .addOnSuccessListener(new OnSuccessListener<Text>() {
+            // 2. Combine them into a single task that completes when both are done
+            return Tasks.whenAll(textRecognitionTask, faceDetectionTask)
+                .addOnSuccessListener(new OnSuccessListener<Void>() {
                     @Override
-                    public void onSuccess(Text visionText) {
+                    public void onSuccess(Void aVoid) {
+                        // Both tasks succeeded, now we can safely get their results
+                        List<Face> faces = faceDetectionTask.getResult();
+                        Text visionText = textRecognitionTask.getResult();
+
+                        // Process Text Result
                         String name = extractNameFromText(visionText);
                         if (name != null) {
                             verifiedName = name;
-                            // If we have both name and embedding, we can move on.
-                            if (idCardEmbedding != null) {
-                                currentState = KycState.SCANNING_FACE;
-                                updateUIForState();
-                            }
                         }
-                    }
-                });
 
-            // 2. Find face
-            faceDetector.process(image)
-                .addOnSuccessListener(new OnSuccessListener<List<Face>>() {
-                    @Override
-                    public void onSuccess(List<Face> faces) {
-                        if (!faces.isEmpty()) {
+                        // Process Face Result
+                        if (faces != null && !faces.isEmpty()) {
                             // Assume the largest face is the one on the ID.
                             Face idFace = faces.get(0);
                             Bitmap fullBitmap = ImageUtils.getBitmap(imageProxy);
@@ -237,13 +243,13 @@ public class KycActivity extends AppCompatActivity {
                                 Bitmap croppedFace = cropBitmapToFace(fullBitmap, idFace.getBoundingBox());
                                 idCardEmbedding = faceVerifier.getFaceEmbedding(croppedFace);
                                 Log.d(TAG, "ID Card embedding generated.");
-
-                                // If we have both name and embedding, we can move on.
-                                if (verifiedName != null) {
-                                    currentState = KycState.SCANNING_FACE;
-                                    updateUIForState();
-                                }
                             }
+                        }
+
+                        // Check if we have everything we need to move to the next step
+                        if (verifiedName != null && idCardEmbedding != null) {
+                            currentState = KycState.SCANNING_FACE;
+                            updateUIForState();
                         }
                     }
                 });
@@ -251,9 +257,10 @@ public class KycActivity extends AppCompatActivity {
 
         /**
          * Processes an image frame to find the user's live face.
+         * Returns a Task that completes when the detection process is finished.
          */
-        private void processLiveFaceImage(InputImage image, ImageProxy imageProxy) {
-            faceDetector.process(image)
+        private Task<List<Face>> processLiveFaceImage(InputImage image, ImageProxy imageProxy) {
+            return faceDetector.process(image)
                 .addOnSuccessListener(new OnSuccessListener<List<Face>>() {
                     @Override
                     public void onSuccess(List<Face> faces) {
@@ -376,4 +383,4 @@ public class KycActivity extends AppCompatActivity {
         // Shut down the background executor to prevent memory leaks.
         analysisExecutor.shutdown();
     }
-          }
+}
