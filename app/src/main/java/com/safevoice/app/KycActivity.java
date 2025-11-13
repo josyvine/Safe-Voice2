@@ -2,6 +2,7 @@ package com.safevoice.app;
 
 import android.annotation.SuppressLint;
 import android.app.AlertDialog;
+import android.content.DialogInterface;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.media.Image;
@@ -151,9 +152,11 @@ public class KycActivity extends AppCompatActivity {
                 imageProxy.close();
                 return;
             }
+
             Image mediaImage = imageProxy.getImage();
             if (mediaImage == null || currentState == KycState.COMPLETE || currentState == KycState.VERIFYING) {
-                releaseLockAndCloseProxy(imageProxy);
+                isProcessing.set(false);
+                imageProxy.close();
                 return;
             }
 
@@ -165,15 +168,15 @@ public class KycActivity extends AppCompatActivity {
             } else if (currentState == KycState.SCANNING_FACE) {
                 processingTask = processLiveFaceImage(image, imageProxy);
             } else {
-                releaseLockAndCloseProxy(imageProxy);
+                isProcessing.set(false);
+                imageProxy.close();
                 return;
             }
-            processingTask.addOnCompleteListener(task -> releaseLockAndCloseProxy(imageProxy));
-        }
 
-        private void releaseLockAndCloseProxy(ImageProxy imageProxy) {
-            isProcessing.set(false);
-            imageProxy.close();
+            processingTask.addOnCompleteListener(task -> {
+                isProcessing.set(false);
+                imageProxy.close();
+            });
         }
 
         private Task<Void> processIdCardImage(InputImage image, ImageProxy imageProxy) {
@@ -188,8 +191,8 @@ public class KycActivity extends AppCompatActivity {
                 if (idCardEmbedding == null) {
                     List<Face> faces = faceTask.getResult();
                     if (faces != null && !faces.isEmpty()) {
-                        // --- MEMORY CRASH FIXED HERE ---
-                        // Instead of creating a full bitmap, we crop the raw data directly.
+                        // --- THIS IS THE CRITICAL FIX ---
+                        // Replaced the dangerous getBitmap() with the safe cropAndConvert()
                         Bitmap croppedFace = ImageUtils.cropAndConvert(imageProxy, faces.get(0).getBoundingBox());
                         if (croppedFace != null) {
                             idCardEmbedding = faceVerifier.getFaceEmbedding(croppedFace);
@@ -208,7 +211,8 @@ public class KycActivity extends AppCompatActivity {
                 if (!faces.isEmpty()) {
                     currentState = KycState.VERIFYING;
                     updateUIForState();
-                    // --- MEMORY CRASH FIXED HERE ---
+                    // --- THIS IS THE CRITICAL FIX ---
+                    // Replaced the dangerous getBitmap() with the safe cropAndConvert()
                     Bitmap croppedFace = ImageUtils.cropAndConvert(imageProxy, faces.get(0).getBoundingBox());
                     if (croppedFace != null) {
                         float[] liveEmbedding = faceVerifier.getFaceEmbedding(croppedFace);
@@ -232,6 +236,7 @@ public class KycActivity extends AppCompatActivity {
                 String lineText = line.getText();
                 if (lineText.matches("([A-Z][a-zA-Z]*[.]?[ ]?){2,3}")) {
                     if (!lineText.matches(".*[0-9].*") && lineText.length() < 30) {
+                        Log.d(TAG, "Potential name found: " + lineText);
                         return lineText;
                     }
                 }
@@ -239,46 +244,63 @@ public class KycActivity extends AppCompatActivity {
         }
         return null;
     }
-    
+
+    private Bitmap cropBitmapToFace(Bitmap source, Rect boundingBox) {
+        int x = Math.max(0, boundingBox.left);
+        int y = Math.max(0, boundingBox.top);
+        int width = Math.min(source.getWidth() - x, boundingBox.width());
+        int height = Math.min(source.getHeight() - y, boundingBox.height());
+        return Bitmap.createBitmap(source, x, y, width, height);
+    }
+
     private void handleVerificationSuccess() {
-        if (isFinishing()) return;
+        if (isFinishing() || isDestroyed()) return;
         currentState = KycState.COMPLETE;
-        runOnUiThread(() -> {
-            updateUIForState();
-            Toast.makeText(KycActivity.this, "Verification successful!", Toast.LENGTH_LONG).show();
-            FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-            if (user != null) {
-                Map<String, Object> userData = new HashMap<>();
-                userData.put("verifiedName", verifiedName);
-                FirebaseFirestore.getInstance().collection("users").document(user.getUid())
-                        .set(userData)
-                        .addOnSuccessListener(aVoid -> finish())
-                        .addOnFailureListener(e -> finish());
-            } else {
-                finish();
-            }
-        });
+        updateUIForState();
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user != null) {
+            Map<String, Object> userData = new HashMap<>();
+            userData.put("verifiedName", verifiedName);
+            FirebaseFirestore.getInstance().collection("users").document(user.getUid())
+                    .set(userData)
+                    .addOnSuccessListener(aVoid -> {
+                        Toast.makeText(KycActivity.this, "Verification successful!", Toast.LENGTH_LONG).show();
+                        finish();
+                    })
+                    .addOnFailureListener(e -> {
+                        Toast.makeText(KycActivity.this, "Verification successful, but failed to save name.", Toast.LENGTH_LONG).show();
+                        finish();
+                    });
+        } else {
+            Toast.makeText(this, "Verification successful, but no signed-in user found.", Toast.LENGTH_LONG).show();
+            finish();
+        }
     }
 
     private void handleVerificationFailure(String reason) {
-        if (isFinishing()) return;
+        if (isFinishing() || isDestroyed()) return;
         currentState = KycState.COMPLETE;
-        runOnUiThread(() -> {
-            updateUIForState();
-            Toast.makeText(this, "Verification Failed: " + reason, Toast.LENGTH_LONG).show();
-            new android.os.Handler(Looper.getMainLooper()).postDelayed(this::finish, 3000);
-        });
+        updateUIForState();
+        Toast.makeText(this, "Verification Failed: " + reason, Toast.LENGTH_LONG).show();
+        new android.os.Handler(Looper.getMainLooper()).postDelayed(this::finish, 3000);
+    }
+
+    private String getStackTraceAsString(Exception e) {
+        StringWriter sw = new StringWriter();
+        e.printStackTrace(new PrintWriter(sw));
+        return sw.toString();
     }
 
     private void showErrorDialog(String title, Exception e) {
-        if (isFinishing()) return;
-        StringWriter sw = new StringWriter();
-        e.printStackTrace(new PrintWriter(sw));
-        final String errorReport = sw.toString();
+        if (isFinishing() || isDestroyed()) return;
+        final String errorReport = getStackTraceAsString(e);
         runOnUiThread(() -> new AlertDialog.Builder(KycActivity.this)
                 .setTitle(title)
                 .setMessage(errorReport)
-                .setPositiveButton("Close", (dialog, which) -> finish())
+                .setPositiveButton("Close", (dialog, which) -> {
+                    dialog.dismiss();
+                    finish();
+                })
                 .setCancelable(false)
                 .show());
     }
